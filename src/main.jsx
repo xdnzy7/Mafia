@@ -281,7 +281,15 @@ function App() {
   const duration = getPhaseDuration(phase, config);
 
   useEffect(() => {
-    const socket = createSocket();
+    let socket;
+    try {
+      socket = createSocket();
+    } catch (socketError) {
+      console.error('Socket configuration error', socketError);
+      setNarratorStatus('رابط سيرفر اللعبة غير مضبوط');
+      return undefined;
+    }
+
     socketRef.current = socket;
 
     socket.emit(SOCKET_EVENTS.HOST_JOIN, { roomCode });
@@ -304,10 +312,12 @@ function App() {
 
     socket.on(SOCKET_EVENTS.ROOM_STATE_UPDATED, syncRoomState);
     socket.on(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, syncPlayers);
+    socket.on(SOCKET_EVENTS.ROOM_PLAYERS, syncPlayers);
 
     return () => {
       socket.off(SOCKET_EVENTS.ROOM_STATE_UPDATED, syncRoomState);
       socket.off(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, syncPlayers);
+      socket.off(SOCKET_EVENTS.ROOM_PLAYERS, syncPlayers);
       socket.disconnect();
       socketRef.current = null;
     };
@@ -384,7 +394,7 @@ function App() {
   const joinPlayer = (name) => {
     const trimmed = name.trim();
     if (!trimmed || phase !== 'waiting') return;
-    socketRef.current?.emit(SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed }, (response) => {
+    socketRef.current?.emit(SOCKET_EVENTS.ROOM_JOIN, { roomCode, name: trimmed }, (response) => {
       if (response?.ok && response.player) {
         setSelectedPlayerId(response.player.id);
       }
@@ -815,7 +825,15 @@ function PlayerJoinPage({ roomCode }) {
   const theme = accentMap.gold;
 
   useEffect(() => {
-    const socket = createSocket();
+    let socket;
+    try {
+      socket = createSocket();
+    } catch (socketError) {
+      console.error('Socket configuration error', socketError);
+      setError('رابط سيرفر اللعبة غير مضبوط. أضف VITE_SOCKET_URL في إعدادات الواجهة.');
+      return undefined;
+    }
+
     socketRef.current = socket;
 
     const handleJoined = ({ player: joinedPlayer }) => {
@@ -843,7 +861,7 @@ function PlayerJoinPage({ roomCode }) {
     const restoredPlayer = getPlayerSession(roomCode);
     if (restoredPlayer?.name) {
       waitForSocketConnection(socket)
-        .then(() => emitWithAck(socket, SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: restoredPlayer.name }))
+        .then(() => emitWithAck(socket, SOCKET_EVENTS.ROOM_JOIN, { roomCode, name: restoredPlayer.name }))
         .then((response) => {
           if (response?.ok && response.player) {
             setPlayer(response.player);
@@ -889,8 +907,15 @@ function PlayerJoinPage({ roomCode }) {
 
     try {
       const socket = socketRef.current;
+      if (!socket) {
+        const socketConfigError = new Error('Socket has not been initialized. Check VITE_SOCKET_URL.');
+        console.error('Socket configuration error', socketConfigError);
+        setError('رابط سيرفر اللعبة غير مضبوط. أضف VITE_SOCKET_URL في إعدادات الواجهة.');
+        return;
+      }
+
       await waitForSocketConnection(socket);
-      const response = await emitWithAck(socket, SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed });
+      const response = await emitWithAck(socket, SOCKET_EVENTS.ROOM_JOIN, { roomCode, name: trimmed });
 
       if (!response?.ok) {
         const joinError = response?.message || 'تعذر الانضمام إلى الغرفة.';

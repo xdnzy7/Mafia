@@ -3,10 +3,24 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-import { SOCKET_EVENTS } from '../src/shared/socketEvents.js';
+
+const SOCKET_EVENTS = {
+  HOST_JOIN: 'host:join',
+  ROOM_CREATE: 'room:create',
+  ROOM_JOIN: 'room:join',
+  ROOM_STATE_UPDATED: 'room:stateUpdated',
+  ROOM_PLAYERS_UPDATED: 'room:playersUpdated',
+  ROOM_PLAYERS: 'room:players',
+  PLAYER_JOIN: 'player:join',
+  PLAYER_JOINED: 'player:joined',
+  PLAYER_ROLE_ASSIGNED: 'player:roleAssigned',
+  GAME_START: 'game:start',
+  GAME_STATE: 'game:state',
+  ERROR: 'error',
+};
 
 const PORT = process.env.PORT || 3001;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || '*';
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'https://mafia-f2r5.onrender.com';
 
 const app = express();
 app.use(cors({ origin: CLIENT_ORIGIN }));
@@ -41,19 +55,25 @@ function getOrCreateRoom(roomCode) {
 }
 
 function emitRoomState(room) {
-  io.to(room.roomCode).emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, {
+  const state = {
     roomCode: room.roomCode,
     config: room.config,
     phase: room.phase,
     players: getPublicPlayers(room),
-  });
+  };
+
+  io.to(room.roomCode).emit(SOCKET_EVENTS.ROOM_STATE_UPDATED, state);
+  io.to(room.roomCode).emit(SOCKET_EVENTS.GAME_STATE, state);
 }
 
 function emitPlayersUpdated(room) {
-  io.to(room.roomCode).emit(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, {
+  const payload = {
     roomCode: room.roomCode,
     players: getPublicPlayers(room),
-  });
+  };
+
+  io.to(room.roomCode).emit(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, payload);
+  io.to(room.roomCode).emit(SOCKET_EVENTS.ROOM_PLAYERS, payload);
 }
 
 function assignRoles(players, config) {
@@ -96,7 +116,7 @@ io.on('connection', (socket) => {
     emitPlayersUpdated(room);
   });
 
-  socket.on(SOCKET_EVENTS.PLAYER_JOIN, ({ roomCode, name }, callback) => {
+  const handlePlayerJoin = ({ roomCode, name }, callback) => {
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     if (!roomCode || !trimmedName) {
       callback?.({ ok: false, message: 'رمز الغرفة واسم اللاعب مطلوبان.' });
@@ -143,7 +163,10 @@ io.on('connection', (socket) => {
       io.to(room.hostSocketId).emit(SOCKET_EVENTS.PLAYER_JOINED, { roomCode, player: { ...player, socketId: undefined } });
     }
     emitPlayersUpdated(room);
-  });
+  };
+
+  socket.on(SOCKET_EVENTS.PLAYER_JOIN, handlePlayerJoin);
+  socket.on(SOCKET_EVENTS.ROOM_JOIN, handlePlayerJoin);
 
   socket.on(SOCKET_EVENTS.GAME_START, ({ roomCode, config }) => {
     if (!roomCode) return;

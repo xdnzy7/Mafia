@@ -2,10 +2,11 @@ services:
   - type: web
     name: mafia-socket-server
     env: node
+    rootDir: server
     plan: free
     buildCommand: npm install
-    startCommand: npm run server
+    startCommand: npm start
     healthCheckPath: /health
     envVars:
       - key: CLIENT_ORIGIN
-        sync: false
+        value: https://mafia-f2r5.onrender.com
