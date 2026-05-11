@@ -25,6 +25,16 @@ import './styles.css';
 
 const roomCode = 'MAFIA-729';
 
+function Root() {
+  const joinMatch = window.location.pathname.match(/^\/join\/([^/]+)\/?$/);
+
+  if (joinMatch) {
+    return <PlayerJoinPage roomCode={decodeURIComponent(joinMatch[1])} />;
+  }
+
+  return <App />;
+}
+
 const roleMeta = {
   mafia: { label: 'مافيا', icon: Swords, team: 'mafia' },
   doctor: { label: 'طبيب', icon: HeartPulse, team: 'town' },
@@ -523,7 +533,7 @@ function MainScreen(props) {
     actions,
   } = props;
   const Icon = meta.icon;
-  const roomUrl = `${window.location.origin}/join/${roomCode}`;
+  const roomUrl = `${window.location.origin}/join/${encodeURIComponent(roomCode)}`;
 
   if (phase === 'setup') {
     return (
@@ -702,6 +712,74 @@ function PhoneScreen({ phase, theme, players, selectedPlayer, selectedPlayerId, 
         </div>
       </div>
     </aside>
+  );
+}
+
+function PlayerJoinPage({ roomCode }) {
+  const [name, setName] = useState('');
+  const [player, setPlayer] = useState(null);
+  const theme = accentMap.gold;
+
+  const joinRoom = () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setPlayer({
+      id: crypto.randomUUID(),
+      name: trimmed,
+      alive: true,
+      role: null,
+      spectator: false,
+    });
+    setName('');
+  };
+
+  return (
+    <main dir="rtl" className={`relative min-h-screen overflow-hidden bg-black text-stone-50 ${theme.text}`}>
+      <Atmosphere accent="gold" />
+      <section className="relative z-10 mx-auto flex min-h-screen w-full max-w-md items-center px-4 py-6">
+        <div className={`glass-panel w-full rounded-[2rem] border ${theme.border} p-5 ${theme.glow}`}>
+          <div className="text-center">
+            <QrCode className="mx-auto text-amber-100" size={48} />
+            <div className="mt-5 text-xs text-stone-400">رمز الغرفة</div>
+            <h1 className="mt-2 text-4xl font-black text-white">{roomCode}</h1>
+          </div>
+
+          {!player ? (
+            <div className="mt-7">
+              <label className="block">
+                <span className="text-xs text-stone-400">اسم اللاعب</span>
+                <input
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') joinRoom();
+                  }}
+                  placeholder="اكتب اسمك"
+                  className="mt-2 w-full rounded-2xl border border-white/10 bg-black/50 px-4 py-3 text-white outline-none focus:border-amber-200/50"
+                />
+              </label>
+              <button
+                disabled={!name.trim()}
+                onClick={joinRoom}
+                className="premium-button mt-4 w-full disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                انضمام
+              </button>
+            </div>
+          ) : player.role ? (
+            <SecretRole selectedPlayer={player} />
+          ) : (
+            <div className="mt-7 rounded-3xl border border-white/10 bg-white/5 p-5 text-center">
+              <Shield className="mx-auto text-amber-100" size={46} />
+              <div className="mt-4 text-3xl font-black text-white">{player.name}</div>
+              <p className="mt-3 leading-8 text-stone-300">
+                تم تسجيلك. انتظر بدء اللعبة. سيظهر دورك الخاص هنا بعد أن يبدأ المضيف الجولة.
+              </p>
+            </div>
+          )}
+        </div>
+      </section>
+    </main>
   );
 }
 
@@ -1157,4 +1235,4 @@ function buildNarration(phase, nightResult, eliminated, winner) {
   return '';
 }
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(<Root />);
