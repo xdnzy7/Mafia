@@ -99,17 +99,12 @@ io.on('connection', (socket) => {
   socket.on(SOCKET_EVENTS.PLAYER_JOIN, ({ roomCode, name }, callback) => {
     const trimmedName = typeof name === 'string' ? name.trim() : '';
     if (!roomCode || !trimmedName) {
-      callback?.({ ok: false, message: 'Room code and player name are required.' });
+      callback?.({ ok: false, message: 'رمز الغرفة واسم اللاعب مطلوبان.' });
       return;
     }
 
     const room = getOrCreateRoom(roomCode);
     socket.join(roomCode);
-
-    if (room.config && room.players.length >= room.config.players) {
-      callback?.({ ok: false, message: 'Room is full.' });
-      return;
-    }
 
     const existing = room.players.find((player) => player.name.trim().toLowerCase() === trimmedName.toLowerCase());
     if (existing) {
@@ -117,7 +112,15 @@ io.on('connection', (socket) => {
       socket.data.roomCode = roomCode;
       socket.data.playerId = existing.id;
       callback?.({ ok: true, player: { ...existing, socketId: undefined } });
+      if (room.hostSocketId) {
+        io.to(room.hostSocketId).emit(SOCKET_EVENTS.PLAYER_JOINED, { roomCode, player: { ...existing, socketId: undefined } });
+      }
       emitPlayersUpdated(room);
+      return;
+    }
+
+    if (room.config && room.players.length >= room.config.players) {
+      callback?.({ ok: false, message: 'اكتمل عدد اللاعبين في الغرفة.' });
       return;
     }
 
@@ -136,6 +139,9 @@ io.on('connection', (socket) => {
 
     callback?.({ ok: true, player: { ...player, socketId: undefined } });
     socket.emit(SOCKET_EVENTS.PLAYER_JOINED, { roomCode, player: { ...player, socketId: undefined } });
+    if (room.hostSocketId) {
+      io.to(room.hostSocketId).emit(SOCKET_EVENTS.PLAYER_JOINED, { roomCode, player: { ...player, socketId: undefined } });
+    }
     emitPlayersUpdated(room);
   });
 

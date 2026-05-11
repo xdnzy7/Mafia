@@ -37,6 +37,72 @@ function Root() {
   return <App />;
 }
 
+function getPlayerSessionKey(roomCode) {
+  return `mafia:player:${roomCode}`;
+}
+
+function savePlayerSession(roomCode, player) {
+  try {
+    window.sessionStorage.setItem(getPlayerSessionKey(roomCode), JSON.stringify(player));
+  } catch (error) {
+    console.error('Failed to save player session', error);
+  }
+}
+
+function getPlayerSession(roomCode) {
+  try {
+    const stored = window.sessionStorage.getItem(getPlayerSessionKey(roomCode));
+    return stored ? JSON.parse(stored) : null;
+  } catch (error) {
+    console.error('Failed to read player session', error);
+    return null;
+  }
+}
+
+function waitForSocketConnection(socket, timeoutMs = 5000) {
+  if (!socket) return Promise.reject(new Error('Socket has not been initialized.'));
+  if (socket.connected) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      cleanup();
+      reject(new Error('Socket connection timed out.'));
+    }, timeoutMs);
+
+    const cleanup = () => {
+      window.clearTimeout(timeout);
+      socket.off('connect', handleConnect);
+      socket.off('connect_error', handleConnectError);
+    };
+
+    const handleConnect = () => {
+      cleanup();
+      resolve();
+    };
+
+    const handleConnectError = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    socket.once('connect', handleConnect);
+    socket.once('connect_error', handleConnectError);
+    socket.connect();
+  });
+}
+
+function emitWithAck(socket, eventName, payload, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    socket.timeout(timeoutMs).emit(eventName, payload, (error, response) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
 const roleMeta = {
   mafia: { label: 'مافيا', icon: Swords, team: 'mafia' },
   doctor: { label: 'طبيب', icon: HeartPulse, team: 'town' },
@@ -742,8 +808,9 @@ function PhoneScreen({ phase, theme, players, selectedPlayer, selectedPlayerId, 
 
 function PlayerJoinPage({ roomCode }) {
   const [name, setName] = useState('');
-  const [player, setPlayer] = useState(null);
+  const [player, setPlayer] = useState(() => getPlayerSession(roomCode));
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const socketRef = useRef(null);
   const theme = accentMap.gold;
 
@@ -753,37 +820,95 @@ function PlayerJoinPage({ roomCode }) {
 
     const handleJoined = ({ player: joinedPlayer }) => {
       setPlayer(joinedPlayer);
+      savePlayerSession(roomCode, joinedPlayer);
       setError('');
     };
 
     const handleRoleAssigned = ({ player: assignedPlayer }) => {
-      setPlayer((current) => (current?.id === assignedPlayer.id ? assignedPlayer : current));
+      setPlayer((current) => {
+        if (current?.id !== assignedPlayer.id) return current;
+        savePlayerSession(roomCode, assignedPlayer);
+        return assignedPlayer;
+      });
+    };
+
+    const handleConnectError = (connectError) => {
+      console.error('Socket connection error', connectError);
     };
 
     socket.on(SOCKET_EVENTS.PLAYER_JOINED, handleJoined);
     socket.on(SOCKET_EVENTS.PLAYER_ROLE_ASSIGNED, handleRoleAssigned);
+    socket.on('connect_error', handleConnectError);
+
+    const restoredPlayer = getPlayerSession(roomCode);
+    if (restoredPlayer?.name) {
+      waitForSocketConnection(socket)
+        .then(() => emitWithAck(socket, SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: restoredPlayer.name }))
+        .then((response) => {
+          if (response?.ok && response.player) {
+            setPlayer(response.player);
+            savePlayerSession(roomCode, response.player);
+          } else {
+            console.error('Player session restore rejected by server', { roomCode, response });
+          }
+        })
+        .catch((restoreError) => {
+          console.error('Player session restore failed', restoreError);
+        });
+    }
 
     return () => {
       socket.off(SOCKET_EVENTS.PLAYER_JOINED, handleJoined);
       socket.off(SOCKET_EVENTS.PLAYER_ROLE_ASSIGNED, handleRoleAssigned);
+      socket.off('connect_error', handleConnectError);
       socket.disconnect();
       socketRef.current = null;
     };
-  }, []);
+  }, [roomCode]);
 
-  const joinRoom = () => {
+  const joinRoom = async () => {
+    if (isSubmitting) return;
+
     const trimmed = name.trim();
-    if (!trimmed) return;
-    socketRef.current?.emit(SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed }, (response) => {
+    if (!trimmed) {
+      const validationError = 'اكتب اسم اللاعب قبل الانضمام';
+      console.error('Join validation failed', { roomCode, reason: validationError });
+      setError(validationError);
+      return;
+    }
+
+    if (trimmed.length < 2) {
+      const validationError = 'اسم اللاعب يجب أن يكون حرفين على الأقل';
+      console.error('Join validation failed', { roomCode, reason: validationError, name: trimmed });
+      setError(validationError);
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      const socket = socketRef.current;
+      await waitForSocketConnection(socket);
+      const response = await emitWithAck(socket, SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed });
+
       if (!response?.ok) {
-        setError(response?.message || 'تعذر الانضمام إلى الغرفة.');
+        const joinError = response?.message || 'تعذر الانضمام إلى الغرفة.';
+        console.error('Player join rejected by server', { roomCode, name: trimmed, response });
+        setError(joinError);
         return;
       }
 
       setPlayer(response.player);
+      savePlayerSession(roomCode, response.player);
       setError('');
       setName('');
-    });
+    } catch (joinError) {
+      console.error('Player join failed', joinError);
+      setError('تعذر الاتصال بسيرفر اللعبة');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -803,7 +928,11 @@ function PlayerJoinPage({ roomCode }) {
                 <span className="text-xs text-stone-400">اسم اللاعب</span>
                 <input
                   value={name}
-                  onChange={(event) => setName(event.target.value)}
+                  disabled={isSubmitting}
+                  onChange={(event) => {
+                    setName(event.target.value);
+                    if (error) setError('');
+                  }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') joinRoom();
                   }}
@@ -812,11 +941,11 @@ function PlayerJoinPage({ roomCode }) {
                 />
               </label>
               <button
-                disabled={!name.trim()}
+                disabled={isSubmitting}
                 onClick={joinRoom}
                 className="premium-button mt-4 w-full disabled:cursor-not-allowed disabled:opacity-40"
               >
-                انضمام
+                {isSubmitting ? 'جاري الانضمام...' : 'انضمام'}
               </button>
               {error && <p className="mt-3 text-center text-sm text-red-100">{error}</p>}
             </div>
