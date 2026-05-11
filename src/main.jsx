@@ -21,6 +21,8 @@ import {
   Volume2,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import { createSocket } from './socket';
+import { SOCKET_EVENTS } from './shared/socketEvents';
 import './styles.css';
 
 const roomCode = 'MAFIA-729';
@@ -184,6 +186,7 @@ function createNarrator(settings, setNarratorStatus, speechDelayRef) {
 }
 
 function App() {
+  const socketRef = useRef(null);
   const [config, setConfig] = useState(initialConfig);
   const [narratorSettings, setNarratorSettings] = useState(initialNarrator);
   const [narratorStatus, setNarratorStatus] = useState('جاهز');
@@ -210,6 +213,39 @@ function App() {
   const setupValidation = getSetupValidation(config, roleTotal);
   const canStartGame = setupValidation.canCreate && joinedPlayers.length === config.players;
   const duration = getPhaseDuration(phase, config);
+
+  useEffect(() => {
+    const socket = createSocket();
+    socketRef.current = socket;
+
+    socket.emit(SOCKET_EVENTS.HOST_JOIN, { roomCode });
+
+    const syncRoomState = (state) => {
+      if (state.config) setConfig(state.config);
+      if (state.players) {
+        setPlayers(state.players);
+        setSelectedPlayerId((current) => current || state.players[0]?.id || null);
+      }
+      if (state.phase === 'waiting' || state.phase === 'roleReveal') {
+        setPhase(state.phase);
+      }
+    };
+
+    const syncPlayers = ({ players: nextPlayers }) => {
+      setPlayers(nextPlayers);
+      setSelectedPlayerId((current) => current || nextPlayers[0]?.id || null);
+    };
+
+    socket.on(SOCKET_EVENTS.ROOM_STATE_UPDATED, syncRoomState);
+    socket.on(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, syncPlayers);
+
+    return () => {
+      socket.off(SOCKET_EVENTS.ROOM_STATE_UPDATED, syncRoomState);
+      socket.off(SOCKET_EVENTS.ROOM_PLAYERS_UPDATED, syncPlayers);
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!('speechSynthesis' in window)) {
@@ -276,39 +312,28 @@ function App() {
     setPlayers([]);
     setSelectedPlayerId(null);
     setPhase('waiting');
+    socketRef.current?.emit(SOCKET_EVENTS.ROOM_CREATE, { roomCode, config });
   };
 
   const joinPlayer = (name) => {
     const trimmed = name.trim();
     if (!trimmed || phase !== 'waiting') return;
-    setPlayers((current) => {
-      const isDuplicate = current.some((player) => player.name.trim().toLowerCase() === trimmed.toLowerCase());
-      if (isDuplicate) return current;
-      if (current.filter((player) => !player.spectator).length >= config.players) return current;
-      const player = {
-        id: crypto.randomUUID(),
-        name: trimmed,
-        alive: true,
-        role: null,
-        spectator: false,
-      };
-      setSelectedPlayerId(player.id);
-      return [...current, player];
+    socketRef.current?.emit(SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed }, (response) => {
+      if (response?.ok && response.player) {
+        setSelectedPlayerId(response.player.id);
+      }
     });
   };
 
   const startGame = () => {
     if (!canStartGame) return;
-    const assigned = assignRoles(players, config);
-    setPlayers(assigned);
-    setSelectedPlayerId(assigned[0]?.id || null);
+    socketRef.current?.emit(SOCKET_EVENTS.GAME_START, { roomCode, config });
     setActions({ mafiaTarget: null, doctorProtect: null, detectiveCheck: null, votes: {} });
     setNightResult(null);
     setEliminated(null);
     setWinner(null);
     setRound(1);
     setPaused(false);
-    setPhase('roleReveal');
   };
 
   const resetRoom = () => {
@@ -718,19 +743,47 @@ function PhoneScreen({ phase, theme, players, selectedPlayer, selectedPlayerId, 
 function PlayerJoinPage({ roomCode }) {
   const [name, setName] = useState('');
   const [player, setPlayer] = useState(null);
+  const [error, setError] = useState('');
+  const socketRef = useRef(null);
   const theme = accentMap.gold;
+
+  useEffect(() => {
+    const socket = createSocket();
+    socketRef.current = socket;
+
+    const handleJoined = ({ player: joinedPlayer }) => {
+      setPlayer(joinedPlayer);
+      setError('');
+    };
+
+    const handleRoleAssigned = ({ player: assignedPlayer }) => {
+      setPlayer((current) => (current?.id === assignedPlayer.id ? assignedPlayer : current));
+    };
+
+    socket.on(SOCKET_EVENTS.PLAYER_JOINED, handleJoined);
+    socket.on(SOCKET_EVENTS.PLAYER_ROLE_ASSIGNED, handleRoleAssigned);
+
+    return () => {
+      socket.off(SOCKET_EVENTS.PLAYER_JOINED, handleJoined);
+      socket.off(SOCKET_EVENTS.PLAYER_ROLE_ASSIGNED, handleRoleAssigned);
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, []);
 
   const joinRoom = () => {
     const trimmed = name.trim();
     if (!trimmed) return;
-    setPlayer({
-      id: crypto.randomUUID(),
-      name: trimmed,
-      alive: true,
-      role: null,
-      spectator: false,
+    socketRef.current?.emit(SOCKET_EVENTS.PLAYER_JOIN, { roomCode, name: trimmed }, (response) => {
+      if (!response?.ok) {
+        setError(response?.message || 'تعذر الانضمام إلى الغرفة.');
+        return;
+      }
+
+      setPlayer(response.player);
+      setError('');
+      setName('');
     });
-    setName('');
   };
 
   return (
@@ -765,6 +818,7 @@ function PlayerJoinPage({ roomCode }) {
               >
                 انضمام
               </button>
+              {error && <p className="mt-3 text-center text-sm text-red-100">{error}</p>}
             </div>
           ) : player.role ? (
             <SecretRole selectedPlayer={player} />
