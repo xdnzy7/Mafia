@@ -20,17 +20,23 @@ const SOCKET_EVENTS = {
 };
 
 const PORT = process.env.PORT || 3001;
-const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || 'https://mafia-f2r5.onrender.com';
+const ALLOWED_ORIGINS = [
+  process.env.CLIENT_ORIGIN,
+  'https://mafia-f2r5.onrender.com',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+].filter(Boolean);
 
 const app = express();
-app.use(cors({ origin: CLIENT_ORIGIN }));
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json());
 
-const httpServer = createServer(app);
-const io = new Server(httpServer, {
+const server = createServer(app);
+const io = new Server(server, {
   cors: {
-    origin: CLIENT_ORIGIN,
+    origin: ALLOWED_ORIGINS,
     methods: ['GET', 'POST'],
+    credentials: true,
   },
 });
 
@@ -91,11 +97,20 @@ function assignRoles(players, config) {
   }));
 }
 
+app.get('/', (req, res) => {
+  res.status(200).send('Mafia Socket Server Running');
+});
+
 app.get('/health', (req, res) => {
-  res.json({ ok: true });
+  res.status(200).json({
+    status: 'ok',
+    service: 'mafia-server',
+  });
 });
 
 io.on('connection', (socket) => {
+  console.log('Player connected:', socket.id);
+
   socket.on(SOCKET_EVENTS.HOST_JOIN, ({ roomCode }) => {
     if (!roomCode) return;
     const room = getOrCreateRoom(roomCode);
@@ -199,6 +214,8 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    console.log('Player disconnected:', socket.id);
+
     const { roomCode, playerId } = socket.data;
     if (!roomCode || !playerId) return;
     const room = rooms.get(roomCode);
@@ -211,6 +228,6 @@ io.on('connection', (socket) => {
   });
 });
 
-httpServer.listen(PORT, () => {
-  console.log(`Mafia Socket.IO server listening on port ${PORT}`);
+server.listen(PORT, () => {
+  console.log(`Mafia server running on port ${PORT}`);
 });
