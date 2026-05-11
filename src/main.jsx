@@ -523,6 +523,7 @@ function MainScreen(props) {
     actions,
   } = props;
   const Icon = meta.icon;
+  const roomUrl = `${window.location.origin}/join/${roomCode}`;
 
   if (phase === 'setup') {
     return (
@@ -588,7 +589,7 @@ function MainScreen(props) {
         <div className="relative z-10 grid min-h-[700px] gap-6 xl:grid-cols-[420px_1fr]">
           <div className="glass-card flex flex-col items-center justify-center rounded-[1.7rem] p-4 text-center">
             <div className="qr-frame">
-              <QRCodeSVG value="https://mafia.local/join/729" size={210} bgColor="transparent" fgColor="#fff7d6" />
+              <QRCodeSVG value={roomUrl} size={210} bgColor="transparent" fgColor="#fff7d6" />
             </div>
             <div className="mt-6 text-4xl font-black text-white">{roomCode}</div>
             <p className="mt-2 text-stone-300/75">كل لاعب يمسح الرمز ويدخل اسمه الحقيقي.</p>
